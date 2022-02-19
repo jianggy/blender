@@ -599,7 +599,7 @@ void RE_InitRenderCB(Render *re)
   re->progress = float_nothing;
   re->test_break = default_break;
   if (G.background) {
-    re->stats_draw = stats_background;
+    re->stats_draw = stats_nothing;
   }
   else {
     re->stats_draw = stats_nothing;

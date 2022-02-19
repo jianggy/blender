@@ -790,7 +790,7 @@ static int outliner_id_copy_exec(bContext *C, wmOperator *op)
   BLI_join_dirfile(str, sizeof(str), BKE_tempdir_base(), "copybuffer.blend");
   BKE_copybuffer_copy_end(bmain, str, op->reports);
 
-  BKE_reportf(op->reports, RPT_INFO, "Copied %d selected data-block(s)", num_ids);
+  // BKE_reportf(op->reports, RPT_INFO, "Copied %d selected data-block(s)", num_ids);
 
   return OPERATOR_FINISHED;
 }
@@ -2302,7 +2302,7 @@ static int outliner_orphans_purge_exec(bContext *C, wmOperator *op)
 
   BKE_id_multi_tagged_delete(bmain);
 
-  BKE_reportf(op->reports, RPT_INFO, "Deleted %d data-block(s)", num_tagged[INDEX_ID_NULL]);
+  // BKE_reportf(op->reports, RPT_INFO, "Deleted %d data-block(s)", num_tagged[INDEX_ID_NULL]);
 
   /* XXX: tree management normally happens from draw_outliner(), but when
    *      you're clicking to fast on Delete object from context menu in
