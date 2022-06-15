@@ -1,20 +1,4 @@
-# ##### BEGIN GPL LICENSE BLOCK #####
-#
-#  This program is free software; you can redistribute it and/or
-#  modify it under the terms of the GNU General Public License
-#  as published by the Free Software Foundation; either version 2
-#  of the License, or (at your option) any later version.
-#
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with this program; if not, write to the Free Software Foundation,
-#  Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-#
-# ##### END GPL LICENSE BLOCK #####
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 # <pep8 compliant>
 
@@ -76,10 +60,12 @@ class SpellChecker:
         "tangency",
         "vertices",
         "wasn",  # wasn't
+        "zig", "zag",
 
         # Brands etc.
         "htc",
         "huawei",
+        "radeon",
         "vive",
         "xbox",
 
@@ -118,6 +104,7 @@ class SpellChecker:
         "builtin", "builtins",
         "bytecode",
         "chunksize",
+        "codebase",
         "customdata",
         "dataset", "datasets",
         "de",
@@ -136,6 +123,8 @@ class SpellChecker:
         "filename", "filenames",
         "filepath", "filepaths",
         "forcefield", "forcefields",
+        "framerange",
+        "frontmost",
         "fulldome", "fulldomes",
         "fullscreen",
         "gamepad",
@@ -147,6 +136,7 @@ class SpellChecker:
         "inscatter", "inscattering",
         "libdata",
         "lightcache",
+        "lightgroup", "lightgroups",
         "lightprobe", "lightprobes",
         "lightless",
         "lineset",
@@ -405,9 +395,11 @@ class SpellChecker:
         "bitangent",
         "boid", "boids",
         "ceil",
+        "centum",  # From 'centum weight'
         "compressibility",
         "coplanar",
         "curvilinear",
+        "dekameter", "dekameters",
         "equiangular",
         "equisolid",
         "euler", "eulers",
@@ -425,8 +417,11 @@ class SpellChecker:
         "lambertian",
         "laplacian",
         "metadata",
+        "microwatt", "microwatts",
+        "milliwatt", "milliwatts",
         "msgfmt",
         "nand", "xnor",
+        "nanowatt", "nanowatts",
         "normals",
         "numpad",
         "octahedral",
@@ -498,6 +493,7 @@ class SpellChecker:
         "framerate",
         "gimbal",
         "grayscale",
+        "icosahedron",
         "icosphere",
         "inpaint",
         "kerning",
@@ -556,6 +552,7 @@ class SpellChecker:
         "bspline",
         "bweight",
         "colorband",
+        "crazyspace",
         "datablock", "datablocks",
         "despeckle",
         "depsgraph",
@@ -671,6 +668,7 @@ class SpellChecker:
 
         # Acronyms
         "aa", "msaa",
+        "acescg",  # ACEScg color space.
         "ao",
         "aov", "aovs",
         "api",
@@ -730,6 +728,7 @@ class SpellChecker:
         "precisa",
         "px",
         "qmc",
+        "rdna",
         "rdp",
         "rgb", "rgba",
         "rhs",

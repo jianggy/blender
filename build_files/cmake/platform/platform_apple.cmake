@@ -1,22 +1,5 @@
-# ***** BEGIN GPL LICENSE BLOCK *****
-#
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software Foundation,
-# Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-#
-# The Original Code is Copyright (C) 2016, Blender Foundation
-# All rights reserved.
-# ***** END GPL LICENSE BLOCK *****
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright 2016 Blender Foundation. All rights reserved.
 
 # Libraries configuration for Apple.
 
@@ -88,6 +71,7 @@ set(CMAKE_PREFIX_PATH ${LIB_SUBDIRS})
 # Find precompiled libraries, and avoid system or user-installed ones.
 
 if(EXISTS ${LIBDIR})
+  include(platform_old_libs_update)
   without_system_libs_begin()
 endif()
 
@@ -128,25 +112,20 @@ if(WITH_CODEC_SNDFILE)
 endif()
 
 if(WITH_PYTHON)
-  # we use precompiled libraries for py 3.9 and up by default
-  set(PYTHON_VERSION 3.9)
+  # Use precompiled libraries by default.
+  set(PYTHON_VERSION 3.10)
   if(NOT WITH_PYTHON_MODULE AND NOT WITH_PYTHON_FRAMEWORK)
-    # normally cached but not since we include them with blender
+    # Normally cached but not since we include them with blender.
     set(PYTHON_INCLUDE_DIR "${LIBDIR}/python/include/python${PYTHON_VERSION}")
     set(PYTHON_EXECUTABLE "${LIBDIR}/python/bin/python${PYTHON_VERSION}")
     set(PYTHON_LIBRARY ${LIBDIR}/python/lib/libpython${PYTHON_VERSION}.a)
     set(PYTHON_LIBPATH "${LIBDIR}/python/lib/python${PYTHON_VERSION}")
-    # set(PYTHON_LINKFLAGS "-u _PyMac_Error")  # won't  build with this enabled
   else()
-    # module must be compiled against Python framework
+    # Module must be compiled against Python framework.
     set(_py_framework "/Library/Frameworks/Python.framework/Versions/${PYTHON_VERSION}")
-
     set(PYTHON_INCLUDE_DIR "${_py_framework}/include/python${PYTHON_VERSION}")
     set(PYTHON_EXECUTABLE "${_py_framework}/bin/python${PYTHON_VERSION}")
     set(PYTHON_LIBPATH "${_py_framework}/lib/python${PYTHON_VERSION}")
-    # set(PYTHON_LIBRARY python${PYTHON_VERSION})
-    # set(PYTHON_LINKFLAGS "-u _PyMac_Error -framework Python")  # won't  build with this enabled
-
     unset(_py_framework)
   endif()
 
@@ -236,7 +215,12 @@ if(WITH_SDL)
   find_package(SDL2)
   set(SDL_INCLUDE_DIR ${SDL2_INCLUDE_DIRS})
   set(SDL_LIBRARY ${SDL2_LIBRARIES})
-  string(APPEND PLATFORM_LINKFLAGS " -framework ForceFeedback")
+  string(APPEND PLATFORM_LINKFLAGS " -framework ForceFeedback -framework GameController")
+  if("${CMAKE_OSX_ARCHITECTURES}" STREQUAL "arm64")
+    # The minimum macOS version of the libraries makes it so this is included in SDL on arm64
+    # but not x86_64.
+    string(APPEND PLATFORM_LINKFLAGS " -framework CoreHaptics")
+  endif()
 endif()
 
 set(PNG_ROOT ${LIBDIR}/png)
@@ -251,6 +235,15 @@ if(WITH_IMAGE_TIFF)
   if(NOT TIFF_FOUND)
     message(WARNING "TIFF not found, disabling WITH_IMAGE_TIFF")
     set(WITH_IMAGE_TIFF OFF)
+  endif()
+endif()
+
+if(WITH_IMAGE_WEBP)
+  set(WEBP_ROOT_DIR ${LIBDIR}/webp)
+  find_package(WebP)
+  if(NOT WEBP_FOUND)
+    message(WARNING "WebP not found, disabling WITH_IMAGE_WEBP")
+    set(WITH_IMAGE_WEBP OFF)
   endif()
 endif()
 

@@ -31,6 +31,7 @@ layout(std140) uniform shader_data
   uint coarse_face_select_mask;
   uint coarse_face_smooth_mask;
   uint coarse_face_active_mask;
+  uint coarse_face_hidden_mask;
   uint coarse_face_loopstart_mask;
 
   /* Total number of elements to process. */
@@ -101,10 +102,14 @@ uint get_index(uint i)
  * the format. */
 struct PosNorLoop {
   float x, y, z;
-  /* TODO(kevindietrich) : figure how to compress properly as GLSL does not have char/short types,
+  /* TODO(@kevindietrich): figure how to compress properly as GLSL does not have char/short types,
    * bit operations get tricky. */
   float nx, ny, nz;
   float flag;
+};
+
+struct LoopNormal {
+  float nx, ny, nz, flag;
 };
 
 vec3 get_vertex_pos(PosNorLoop vertex_data)
@@ -115,6 +120,16 @@ vec3 get_vertex_pos(PosNorLoop vertex_data)
 vec3 get_vertex_nor(PosNorLoop vertex_data)
 {
   return vec3(vertex_data.nx, vertex_data.ny, vertex_data.nz);
+}
+
+LoopNormal get_normal_and_flag(PosNorLoop vertex_data)
+{
+  LoopNormal loop_nor;
+  loop_nor.nx = vertex_data.nx;
+  loop_nor.ny = vertex_data.ny;
+  loop_nor.nz = vertex_data.nz;
+  loop_nor.flag = vertex_data.flag;
+  return loop_nor;
 }
 
 void set_vertex_pos(inout PosNorLoop vertex_data, vec3 pos)
@@ -138,6 +153,13 @@ void set_vertex_nor(inout PosNorLoop vertex_data, vec3 nor, uint flag)
 void set_vertex_nor(inout PosNorLoop vertex_data, vec3 nor)
 {
   set_vertex_nor(vertex_data, nor, 0);
+}
+
+void add_newell_cross_v3_v3v3(inout vec3 n, vec3 v_prev, vec3 v_curr)
+{
+  n[0] += (v_prev[1] - v_curr[1]) * (v_prev[2] + v_curr[2]);
+  n[1] += (v_prev[2] - v_curr[2]) * (v_prev[0] + v_curr[0]);
+  n[2] += (v_prev[0] - v_curr[0]) * (v_prev[1] + v_curr[1]);
 }
 
 #define ORIGINDEX_NONE -1

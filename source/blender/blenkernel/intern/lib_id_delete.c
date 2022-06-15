@@ -1,24 +1,12 @@
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /** \file
  * \ingroup bke
  *
  * Contains management of ID's for freeing & deletion.
  */
+
+#include "CLG_log.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -49,8 +37,7 @@
 #  include "BPY_extern.h"
 #endif
 
-/* Not used currently. */
-// static CLG_LogRef LOG = {.identifier = "bke.lib_id_delete"};
+static CLG_LogRef LOG = {.identifier = "bke.lib_id_delete"};
 
 void BKE_libblock_free_data(ID *id, const bool do_id_user)
 {
@@ -134,7 +121,7 @@ void BKE_id_free_ex(Main *bmain, void *idv, int flag, const bool use_flag_from_i
   Key *key = ((flag & LIB_ID_FREE_NO_MAIN) == 0) ? BKE_key_from_id(id) : NULL;
 
   if ((flag & LIB_ID_FREE_NO_USER_REFCOUNT) == 0) {
-    BKE_libblock_relink_ex(bmain, id, NULL, NULL, 0);
+    BKE_libblock_relink_ex(bmain, id, NULL, NULL, ID_REMAP_SKIP_USER_CLEAR);
   }
 
   if ((flag & LIB_ID_FREE_NO_MAIN) == 0 && key != NULL) {
@@ -154,7 +141,10 @@ void BKE_id_free_ex(Main *bmain, void *idv, int flag, const bool use_flag_from_i
     }
 
     if (remap_editor_id_reference_cb) {
-      remap_editor_id_reference_cb(id, NULL);
+      struct IDRemapper *remapper = BKE_id_remapper_create();
+      BKE_id_remapper_add(remapper, id, NULL);
+      remap_editor_id_reference_cb(remapper);
+      BKE_id_remapper_free(remapper);
     }
   }
 
@@ -245,7 +235,7 @@ static size_t id_delete(Main *bmain, const bool do_tagged_deletion)
         for (id = lb->first; id; id = id_next) {
           id_next = id->next;
           /* NOTE: in case we delete a library, we also delete all its datablocks! */
-          if ((id->tag & tag) || (id->lib != NULL && (id->lib->id.tag & tag))) {
+          if ((id->tag & tag) || (ID_IS_LINKED(id) && (id->lib->id.tag & tag))) {
             BLI_remlink(lb, id);
             BLI_addtail(&tagged_deleted_ids, id);
             /* Do not tag as no_main now, we want to unlink it first (lower-level ID management
@@ -262,8 +252,8 @@ static size_t id_delete(Main *bmain, const bool do_tagged_deletion)
       }
       for (id = last_remapped_id->next; id; id = id->next) {
         /* Will tag 'never NULL' users of this ID too.
-         * Note that we cannot use BKE_libblock_unlink() here,
-         * since it would ignore indirect (and proxy!)
+         *
+         * NOTE: #BKE_libblock_unlink() cannot be used here, since it would ignore indirect
          * links, this can lead to nasty crashing here in second, actual deleting loop.
          * Also, this will also flag users of deleted data that cannot be unlinked
          * (object using deleted obdata, etc.), so that they also get deleted. */
@@ -275,7 +265,12 @@ static size_t id_delete(Main *bmain, const bool do_tagged_deletion)
                                    ID_REMAP_FORCE_INTERNAL_RUNTIME_POINTERS));
         /* Since we removed ID from Main,
          * we also need to unlink its own other IDs usages ourself. */
-        BKE_libblock_relink_ex(bmain, id, NULL, NULL, ID_REMAP_FORCE_INTERNAL_RUNTIME_POINTERS);
+        BKE_libblock_relink_ex(
+            bmain,
+            id,
+            NULL,
+            NULL,
+            (ID_REMAP_FORCE_INTERNAL_RUNTIME_POINTERS | ID_REMAP_SKIP_USER_CLEAR));
       }
     }
 
@@ -292,32 +287,40 @@ static size_t id_delete(Main *bmain, const bool do_tagged_deletion)
      * Note that we go forward here, since we want to check dependencies before users
      * (e.g. meshes before objects).
      * Avoids to have to loop twice. */
+    struct IDRemapper *remapper = BKE_id_remapper_create();
     for (i = 0; i < base_count; i++) {
       ListBase *lb = lbarray[i];
       ID *id, *id_next;
+      BKE_id_remapper_clear(remapper);
 
       for (id = lb->first; id; id = id_next) {
         id_next = id->next;
         /* NOTE: in case we delete a library, we also delete all its datablocks! */
-        if ((id->tag & tag) || (id->lib != NULL && (id->lib->id.tag & tag))) {
+        if ((id->tag & tag) || (ID_IS_LINKED(id) && (id->lib->id.tag & tag))) {
           id->tag |= tag;
-
-          /* Will tag 'never NULL' users of this ID too.
-           * Note that we cannot use BKE_libblock_unlink() here, since it would ignore indirect
-           * (and proxy!) links, this can lead to nasty crashing here in second,
-           * actual deleting loop.
-           * Also, this will also flag users of deleted data that cannot be unlinked
-           * (object using deleted obdata, etc.), so that they also get deleted. */
-          BKE_libblock_remap_locked(bmain,
-                                    id,
-                                    NULL,
-                                    (ID_REMAP_FLAG_NEVER_NULL_USAGE |
-                                     ID_REMAP_FORCE_NEVER_NULL_USAGE |
-                                     ID_REMAP_FORCE_INTERNAL_RUNTIME_POINTERS));
+          BKE_id_remapper_add(remapper, id, NULL);
         }
       }
+
+      if (BKE_id_remapper_is_empty(remapper)) {
+        continue;
+      }
+
+      /* Will tag 'never NULL' users of this ID too.
+       *
+       * NOTE: #BKE_libblock_unlink() cannot be used here, since it would ignore indirect
+       * links, this can lead to nasty crashing here in second, actual deleting loop.
+       * Also, this will also flag users of deleted data that cannot be unlinked
+       * (object using deleted obdata, etc.), so that they also get deleted. */
+      BKE_libblock_remap_multiple_locked(bmain,
+                                         remapper,
+                                         (ID_REMAP_FLAG_NEVER_NULL_USAGE |
+                                          ID_REMAP_FORCE_NEVER_NULL_USAGE |
+                                          ID_REMAP_FORCE_INTERNAL_RUNTIME_POINTERS));
     }
+    BKE_id_remapper_free(remapper);
   }
+
   BKE_main_unlock(bmain);
 
   /* In usual reversed order, such that all usage of a given ID, even 'never NULL' ones,
@@ -332,11 +335,13 @@ static size_t id_delete(Main *bmain, const bool do_tagged_deletion)
     for (id = do_tagged_deletion ? tagged_deleted_ids.first : lb->first; id; id = id_next) {
       id_next = id->next;
       if (id->tag & tag) {
-        if (id->us != 0) {
-#ifdef DEBUG_PRINT
-          printf("%s: deleting %s (%d)\n", __func__, id->name, id->us);
-#endif
-          BLI_assert(id->us == 0);
+        if (((id->tag & LIB_TAG_EXTRAUSER_SET) == 0 && ID_REAL_USERS(id) != 0) ||
+            ((id->tag & LIB_TAG_EXTRAUSER_SET) != 0 && ID_REAL_USERS(id) != 1)) {
+          CLOG_ERROR(&LOG,
+                     "Deleting %s which still has %d users (including %d 'extra' shallow users)\n",
+                     id->name,
+                     ID_REAL_USERS(id),
+                     (id->tag & LIB_TAG_EXTRAUSER_SET) != 0 ? 1 : 0);
         }
         BKE_id_free_ex(bmain, id, free_flag, !do_tagged_deletion);
         ++num_datablocks_deleted;

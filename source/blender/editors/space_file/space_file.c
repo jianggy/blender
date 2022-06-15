@@ -1,21 +1,5 @@
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * The Original Code is Copyright (C) 2008 Blender Foundation.
- * All rights reserved.
- */
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright 2008 Blender Foundation. All rights reserved. */
 
 /** \file
  * \ingroup spfile
@@ -33,6 +17,7 @@
 #include "BKE_appdir.h"
 #include "BKE_context.h"
 #include "BKE_global.h"
+#include "BKE_lib_remap.h"
 #include "BKE_main.h"
 #include "BKE_screen.h"
 
@@ -859,7 +844,7 @@ static bool filepath_drop_poll(bContext *C, wmDrag *drag, const wmEvent *UNUSED(
   return false;
 }
 
-static void filepath_drop_copy(wmDrag *drag, wmDropBox *drop)
+static void filepath_drop_copy(bContext *UNUSED(C), wmDrag *drag, wmDropBox *drop)
 {
   RNA_string_set(drop->ptr, "filepath", drag->path);
 }
@@ -989,7 +974,7 @@ static int /*eContextResult*/ file_context(const bContext *C,
   return CTX_RESULT_MEMBER_NOT_FOUND;
 }
 
-static void file_id_remap(ScrArea *area, SpaceLink *sl, ID *UNUSED(old_id), ID *UNUSED(new_id))
+static void file_id_remap(ScrArea *area, SpaceLink *sl, const struct IDRemapper *UNUSED(mappings))
 {
   SpaceFile *sfile = (SpaceFile *)sl;
 

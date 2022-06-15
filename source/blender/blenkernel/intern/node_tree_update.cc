@@ -1,18 +1,4 @@
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_map.hh"
 #include "BLI_multi_value_map.hh"
@@ -26,6 +12,7 @@
 #include "DNA_node_types.h"
 
 #include "BKE_anim_data.h"
+#include "BKE_image.h"
 #include "BKE_main.h"
 #include "BKE_node.h"
 #include "BKE_node_tree_update.h"
@@ -34,6 +21,7 @@
 
 #include "NOD_node_declaration.hh"
 #include "NOD_node_tree_ref.hh"
+#include "NOD_texture.h"
 
 #include "DEG_depsgraph_query.h"
 
@@ -271,6 +259,12 @@ static OutputFieldDependency find_group_output_dependencies(
 
   while (!sockets_to_check.is_empty()) {
     const InputSocketRef *input_socket = sockets_to_check.pop();
+
+    if (!input_socket->is_directly_linked() &&
+        !field_state_by_socket_id[input_socket->id()].is_single) {
+      /* This socket uses a field as input by default. */
+      return OutputFieldDependency::ForFieldSource();
+    }
 
     for (const OutputSocketRef *origin_socket : input_socket->directly_linked_sockets()) {
       const NodeRef &origin_node = origin_socket->node();
@@ -991,6 +985,7 @@ class NodeTreeMainUpdater {
     this->remove_unused_previews_when_necessary(ntree);
 
     this->ensure_tree_ref(ntree, tree_ref);
+    this->propagate_runtime_flags(*tree_ref);
     if (ntree.type == NTREE_GEOMETRY) {
       if (node_field_inferencing::update_field_inferencing(*tree_ref)) {
         result.interface_changed = true;
@@ -1261,6 +1256,44 @@ class NodeTreeMainUpdater {
     BKE_node_preview_remove_unused(&ntree);
   }
 
+  void propagate_runtime_flags(const NodeTreeRef &tree_ref)
+  {
+    bNodeTree &ntree = *tree_ref.btree();
+    ntree.runtime_flag = 0;
+    if (ntree.type != NTREE_SHADER) {
+      return;
+    }
+
+    /* Check if a used node group has an animated image. */
+    for (const NodeRef *group_node : tree_ref.nodes_by_type("NodeGroup")) {
+      const bNodeTree *group = reinterpret_cast<bNodeTree *>(group_node->bnode()->id);
+      if (group != nullptr) {
+        ntree.runtime_flag |= group->runtime_flag;
+      }
+    }
+    /* Check if the tree itself has an animated image. */
+    for (const StringRefNull idname : {"ShaderNodeTexImage", "ShaderNodeTexEnvironment"}) {
+      for (const NodeRef *node : tree_ref.nodes_by_type(idname)) {
+        Image *image = reinterpret_cast<Image *>(node->bnode()->id);
+        if (image != nullptr && BKE_image_is_animated(image)) {
+          ntree.runtime_flag |= NTREE_RUNTIME_FLAG_HAS_IMAGE_ANIMATION;
+          break;
+        }
+      }
+    }
+    /* Check if the tree has a material output. */
+    for (const StringRefNull idname : {"ShaderNodeOutputMaterial",
+                                       "ShaderNodeOutputLight",
+                                       "ShaderNodeOutputWorld",
+                                       "ShaderNodeOutputAOV"}) {
+      const Span<const NodeRef *> nodes = tree_ref.nodes_by_type(idname);
+      if (!nodes.is_empty()) {
+        ntree.runtime_flag |= NTREE_RUNTIME_FLAG_HAS_MATERIAL_OUTPUT;
+        break;
+      }
+    }
+  }
+
   void update_node_levels(bNodeTree &ntree)
   {
     ntreeUpdateNodeLevels(&ntree);
@@ -1346,8 +1379,7 @@ class NodeTreeMainUpdater {
   {
     Vector<const SocketRef *> sockets;
     for (const NodeRef *node : tree.nodes()) {
-      const bNode *bnode = node->bnode();
-      if (bnode->typeinfo->nclass != NODE_CLASS_OUTPUT && bnode->type != NODE_GROUP_OUTPUT) {
+      if (!this->is_output_node(*node)) {
         continue;
       }
       for (const InputSocketRef *socket : node->inputs()) {
@@ -1357,6 +1389,26 @@ class NodeTreeMainUpdater {
       }
     }
     return sockets;
+  }
+
+  bool is_output_node(const NodeRef &node) const
+  {
+    const bNode &bnode = *node.bnode();
+    if (bnode.typeinfo->nclass == NODE_CLASS_OUTPUT) {
+      return true;
+    }
+    if (bnode.type == NODE_GROUP_OUTPUT) {
+      return true;
+    }
+    /* Assume node groups without output sockets are outputs. */
+    if (bnode.type == NODE_GROUP) {
+      const bNodeTree *node_group = reinterpret_cast<const bNodeTree *>(bnode.id);
+      if (node_group != nullptr &&
+          node_group->runtime_flag & NTREE_RUNTIME_FLAG_HAS_MATERIAL_OUTPUT) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1445,6 +1497,16 @@ class NodeTreeMainUpdater {
             socket_hash = noise::hash(socket_hash, input_socket_hash);
           }
         }
+        /* The Image Texture node has a special case. The behavior of the color output changes
+         * depending on whether the Alpha output is linked. */
+        if (node.bnode()->type == SH_NODE_TEX_IMAGE && socket.index() == 0) {
+          BLI_assert(socket.name() == "Color");
+          const OutputSocketRef &alpha_socket = node.output(1);
+          BLI_assert(alpha_socket.name() == "Alpha");
+          if (alpha_socket.is_directly_linked()) {
+            socket_hash = noise::hash(socket_hash);
+          }
+        }
         hash_by_socket_id[socket.id()] = socket_hash;
         sockets_to_check.pop();
       }
@@ -1475,7 +1537,8 @@ class NodeTreeMainUpdater {
 
     while (!sockets_to_check.is_empty()) {
       const SocketRef &in_out_socket = *sockets_to_check.pop();
-      const bNode &bnode = *in_out_socket.node().bnode();
+      const NodeRef &node = in_out_socket.node();
+      const bNode &bnode = *node.bnode();
       const bNodeSocket &bsocket = *in_out_socket.bsocket();
       if (bsocket.changed_flag != NTREE_CHANGED_NOTHING) {
         return true;
@@ -1500,13 +1563,25 @@ class NodeTreeMainUpdater {
       }
       else {
         const OutputSocketRef &socket = in_out_socket.as_output();
-        for (const InputSocketRef *input_socket : socket.node().inputs()) {
+        for (const InputSocketRef *input_socket : node.inputs()) {
           if (input_socket->is_available()) {
             bool &pushed = pushed_by_socket_id[input_socket->id()];
             if (!pushed) {
               sockets_to_check.push(input_socket);
               pushed = true;
             }
+          }
+        }
+        /* The Normal node has a special case, because the value stored in the first output socket
+         * is used as input in the node. */
+        if (bnode.type == SH_NODE_NORMAL && socket.index() == 1) {
+          BLI_assert(socket.name() == "Dot");
+          const OutputSocketRef &normal_output = node.output(0);
+          BLI_assert(normal_output.name() == "Normal");
+          bool &pushed = pushed_by_socket_id[normal_output.id()];
+          if (!pushed) {
+            sockets_to_check.push(&normal_output);
+            pushed = true;
           }
         }
       }
@@ -1607,6 +1682,11 @@ void BKE_ntree_update_tag_link_mute(bNodeTree *ntree, bNodeLink *UNUSED(link))
   add_tree_tag(ntree, NTREE_CHANGED_LINK);
 }
 
+void BKE_ntree_update_tag_active_output_changed(bNodeTree *ntree)
+{
+  add_tree_tag(ntree, NTREE_CHANGED_ANY);
+}
+
 void BKE_ntree_update_tag_missing_runtime_data(bNodeTree *ntree)
 {
   add_tree_tag(ntree, NTREE_CHANGED_ALL);
@@ -1628,6 +1708,12 @@ void BKE_ntree_update_tag_id_changed(Main *bmain, ID *id)
     }
   }
   FOREACH_NODETREE_END;
+}
+
+void BKE_ntree_update_tag_image_user_changed(bNodeTree *ntree, ImageUser *UNUSED(iuser))
+{
+  /* Would have to search for the node that uses the image user for a more detailed tag. */
+  add_tree_tag(ntree, NTREE_CHANGED_ANY);
 }
 
 /**

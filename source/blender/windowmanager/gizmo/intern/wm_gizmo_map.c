@@ -1,21 +1,5 @@
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * The Original Code is Copyright (C) 2014 Blender Foundation.
- * All rights reserved.
- */
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright 2014 Blender Foundation. All rights reserved. */
 
 /** \file
  * \ingroup wm
@@ -38,9 +22,12 @@
 #include "ED_select_utils.h"
 #include "ED_view3d.h"
 
+#include "GPU_framebuffer.h"
 #include "GPU_matrix.h"
+#include "GPU_platform.h"
 #include "GPU_select.h"
 #include "GPU_state.h"
+#include "GPU_viewport.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -572,7 +559,7 @@ static int gizmo_find_intersected_3d_intern(wmGizmo **visible_gizmos,
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   rcti rect;
   /* Almost certainly overkill, but allow for many custom gizmos. */
-  uint buffer[MAXPICKBUF];
+  GPUSelectResult buffer[MAXPICKELEMS];
   short hits;
 
   BLI_rcti_init_pt_radius(&rect, co, hotspot);
@@ -611,15 +598,15 @@ static int gizmo_find_intersected_3d_intern(wmGizmo **visible_gizmos,
 
     GPU_matrix_unproject_3fv(co_screen, rv3d->viewinv, rv3d->winmat, viewport, co_3d_origin);
 
-    uint *buf_iter = buffer;
+    GPUSelectResult *buf_iter = buffer;
     int hit_found = -1;
     float dot_best = FLT_MAX;
 
-    for (int i = 0; i < hits; i++, buf_iter += 4) {
-      BLI_assert(buf_iter[3] != -1);
-      wmGizmo *gz = visible_gizmos[buf_iter[3] >> 8];
+    for (int i = 0; i < hits; i++, buf_iter++) {
+      BLI_assert(buf_iter->id != -1);
+      wmGizmo *gz = visible_gizmos[buf_iter->id >> 8];
       float co_3d[3];
-      co_screen[2] = int_as_float(buf_iter[1]);
+      co_screen[2] = (float)((double)buf_iter->depth / (double)UINT_MAX);
       GPU_matrix_unproject_3fv(co_screen, rv3d->viewinv, rv3d->winmat, viewport, co_3d);
       float select_bias = gz->select_bias;
       if ((gz->flag & WM_GIZMO_DRAW_NO_SCALE) == 0) {
@@ -629,14 +616,14 @@ static int gizmo_find_intersected_3d_intern(wmGizmo **visible_gizmos,
       const float dot_test = dot_v3v3(co_3d, co_direction) - select_bias;
       if (dot_best > dot_test) {
         dot_best = dot_test;
-        hit_found = buf_iter[3];
+        hit_found = buf_iter->id;
       }
     }
     return hit_found;
   }
 
-  const uint *hit_near = GPU_select_buffer_near(buffer, hits);
-  return hit_near ? hit_near[3] : -1;
+  const GPUSelectResult *hit_near = GPU_select_buffer_near(buffer, hits);
+  return hit_near ? hit_near->id : -1;
 }
 
 /**
@@ -681,6 +668,25 @@ static wmGizmo *gizmo_find_intersected_3d(bContext *C,
   /* Search for 3D intersections if they're before 2D that have been found (if any).
    * This way we always use the first hit. */
   if (has_3d) {
+
+    /* The depth buffer is needed for for gizmos to obscure eachother.  */
+    GPUViewport *viewport = WM_draw_region_get_viewport(CTX_wm_region(C));
+
+    /* When switching between modes and the mouse pointer is over a gizmo, the highlight test is
+     * performed before the viewport is fully initialized (region->draw_buffer = NULL).
+     * When this is the case we should not use depth testing. */
+    if (viewport == NULL) {
+      return NULL;
+    }
+    GPUTexture *depth_tx = GPU_viewport_depth_texture(viewport);
+    GPUFrameBuffer *depth_read_fb = NULL;
+    GPU_framebuffer_ensure_config(&depth_read_fb,
+                                  {
+                                      GPU_ATTACHMENT_TEXTURE(depth_tx),
+                                      GPU_ATTACHMENT_NONE,
+                                  });
+    GPU_framebuffer_bind(depth_read_fb);
+
     const int hotspot_radii[] = {
         3 * U.pixelsize,
         /* This runs on mouse move, careful doing too many tests! */
@@ -693,6 +699,9 @@ static wmGizmo *gizmo_find_intersected_3d(bContext *C,
         break;
       }
     }
+
+    GPU_framebuffer_restore();
+    GPU_framebuffer_free(depth_read_fb);
 
     if (hit != -1) {
       const int select_id = hit >> 8;
@@ -716,11 +725,17 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
   BLI_buffer_declare_static(wmGizmo *, visible_3d_gizmos, BLI_BUFFER_NOP, 128);
   bool do_step[WM_GIZMOMAP_DRAWSTEP_MAX];
 
+  int mval[2];
+  if (event->val == KM_CLICK_DRAG) {
+    WM_event_drag_start_mval(event, CTX_wm_region(C), mval);
+  }
+  else {
+    copy_v2_v2_int(mval, event->mval);
+  }
+
   for (int i = 0; i < ARRAY_SIZE(do_step); i++) {
     do_step[i] = WM_gizmo_context_check_drawstep(C, i);
   }
-
-  const int event_modifier = WM_event_modifier_flag(event);
 
   LISTBASE_FOREACH (wmGizmoGroup *, gzgroup, &gzmap->groups) {
 
@@ -740,11 +755,11 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
         }
         if (step == WM_GIZMOMAP_DRAWSTEP_3D) {
           wm_gizmogroup_intersectable_gizmos_to_list(
-              wm, gzgroup, event_modifier, &visible_3d_gizmos);
+              wm, gzgroup, event->modifier, &visible_3d_gizmos);
         }
         else if (step == WM_GIZMOMAP_DRAWSTEP_2D) {
           if ((gz = wm_gizmogroup_find_intersected_gizmo(
-                   wm, gzgroup, C, event_modifier, event->mval, r_part))) {
+                   wm, gzgroup, C, event->modifier, mval, r_part))) {
             break;
           }
         }
@@ -756,7 +771,7 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
     /* 2D gizmos get priority. */
     if (gz == NULL) {
       gz = gizmo_find_intersected_3d(
-          C, event->mval, visible_3d_gizmos.data, visible_3d_gizmos.count, r_part);
+          C, mval, visible_3d_gizmos.data, visible_3d_gizmos.count, r_part);
     }
   }
   BLI_buffer_free(&visible_3d_gizmos);
@@ -1052,7 +1067,7 @@ void wm_gizmomap_modal_set(
 
     struct wmGizmoOpElem *gzop = WM_gizmo_operator_get(gz, gz->highlight_part);
     if (gzop && gzop->type) {
-      const int retval = WM_gizmo_operator_invoke(C, gz, gzop);
+      const int retval = WM_gizmo_operator_invoke(C, gz, gzop, event);
       if ((retval & OPERATOR_RUNNING_MODAL) == 0) {
         wm_gizmomap_modal_set(gzmap, C, gz, event, false);
       }

@@ -1,4 +1,4 @@
-/* Apache License, Version 2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 #include "testing/testing.h"
 
@@ -27,8 +27,6 @@ using namespace blender::draw::image_engine;
 
 static void test_workbench_glsl_shaders()
 {
-  workbench_shader_library_ensure();
-
   const int MAX_WPD = 6;
   WORKBENCH_PrivateData wpds[MAX_WPD];
 
@@ -185,10 +183,8 @@ DRAW_TEST(gpencil_glsl_shaders)
 
 static void test_image_glsl_shaders()
 {
-  IMAGE_shader_library_ensure();
-
-  EXPECT_NE(IMAGE_shader_image_get(false), nullptr);
-  EXPECT_NE(IMAGE_shader_image_get(true), nullptr);
+  EXPECT_NE(IMAGE_shader_image_get(), nullptr);
+  EXPECT_NE(IMAGE_shader_depth_get(), nullptr);
 
   IMAGE_shader_free();
 }
@@ -196,8 +192,6 @@ DRAW_TEST(image_glsl_shaders)
 
 static void test_overlay_glsl_shaders()
 {
-  OVERLAY_shader_library_ensure();
-
   for (int i = 0; i < 2; i++) {
     eGPUShaderConfig sh_cfg = i == 0 ? GPU_SHADER_CFG_DEFAULT : GPU_SHADER_CFG_CLIPPED;
     DRW_draw_state_init_gtests(sh_cfg);
